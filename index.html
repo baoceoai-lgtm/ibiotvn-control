@@ -1,98 +1,141 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-  <head>
-    <base target="_top">
-    <style>
-      body, html {
-        margin: 0;
-        padding: 0;
-        height: 100%;
-        width: 100%;
-        font-family: Arial, sans-serif;
-        overflow: hidden; /* Tránh cuộn trang */
-      }
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>IoT Realtime Control</title>
 
-      .container {
-        display: grid;
-        grid-template-columns: 1fr 1fr; /* Chia 2 cột */
-        grid-template-rows: 1fr 1fr;    /* Chia 2 hàng */
-        height: 100vh;                 /* Full chiều cao màn hình */
-        gap: 10px;                     /* Khoảng cách giữa các nút */
-        padding: 10px;
-        box-sizing: border-box;
-        background-color: #121212;     /* Nền tối cho hiện đại */
-      }
+  <style>
+    body {
+      margin: 0;
+      background: #0f172a;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: #fff;
+    }
 
-      .control-btn {
-        border: none;
-        border-radius: 15px;
-        color: white;
-        font-size: 1.5rem;
-        font-weight: bold;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: transform 0.1s, background-color 0.3s;
-        text-transform: uppercase;
-      }
+    .screen {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
 
-      /* Trạng thái OFF */
-      .off { background-color: #333333; color: #888; }
-      
-      /* Trạng thái ON */
-      .on { background-color: #4CAF50; color: white; box-shadow: 0 0 20px rgba(76, 175, 80, 0.4); }
+    .header {
+      height: 8vh;
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 900;
+      background: #020617;
+    }
 
-      .control-btn:active {
-        transform: scale(0.95); /* Hiệu ứng nhấn nút */
-      }
+    .block {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
 
-      .status-text {
-        font-size: 0.8rem;
-        margin-top: 5px;
-        opacity: 0.8;
-      }
-    </style>
-  </head>
-  <body>
+    .name {
+      font-size: 28px;
+      font-weight: 900;
+    }
 
-    <div class="container">
-      <button id="btn1" class="control-btn off" onclick="toggle(this, 'Thiết bị 1')">
-        Nút 1 <span class="status-text">OFF</span>
-      </button>
-      <button id="btn2" class="control-btn off" onclick="toggle(this, 'Thiết bị 2')">
-        Nút 2 <span class="status-text">OFF</span>
-      </button>
-      <button id="btn3" class="control-btn off" onclick="toggle(this, 'Thiết bị 3')">
-        Nút 3 <span class="status-text">OFF</span>
-      </button>
-      <button id="btn4" class="control-btn off" onclick="toggle(this, 'Thiết bị 4')">
-        Nút 4 <span class="status-text">OFF</span>
-      </button>
+    .btn {
+      width: 140px;
+      height: 60px;
+      border-radius: 18px;
+      border: none;
+      font-size: 18px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .on { background: #16a34a; color: #03160a; }
+    .off { background: #ef4444; color: #240202; }
+  </style>
+</head>
+
+<body>
+  <div class="screen">
+    <div class="header">IOT REALTIME CONTROL</div>
+
+    <div class="block">
+      <div class="name">PIN1</div>
+      <button id="PIN1" class="btn off" onclick="toggle('PIN1')">OFF</button>
     </div>
 
-    <script>
-      function toggle(btn, deviceName) {
-        var isOff = btn.classList.contains('off');
-        var newStatus = isOff ? 'ON' : 'OFF';
-        
-        // Gửi lệnh về Google Apps Script (Backend)
-        fetch()
-          .withSuccessHandler(function(res) {
-            // Nếu gửi lệnh thành công thì mới đổi màu nút
-            if (isOff) {
-              btn.classList.remove('off');
-              btn.classList.add('on');
-              btn.querySelector('.status-text').innerText = 'ON';
-            } else {
-              btn.classList.remove('on');
-              btn.classList.add('off');
-              btn.querySelector('.status-text').innerText = 'OFF';
-            }
-          })
-          .controlDevice(deviceName, newStatus);
-      }
-    </script>
-  </body>
+    <div class="block">
+      <div class="name">PIN2</div>
+      <button id="PIN2" class="btn off" onclick="toggle('PIN2')">OFF</button>
+    </div>
+
+    <div class="block">
+      <div class="name">PIN3</div>
+      <button id="PIN3" class="btn off" onclick="toggle('PIN3')">OFF</button>
+    </div>
+
+    <div class="block">
+      <div class="name">PIN4</div>
+      <button id="PIN4" class="btn off" onclick="toggle('PIN4')">OFF</button>
+    </div>
+  </div>
+
+  <!-- ===== FIREBASE REALTIME SDK ===== -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+    // 🔧 Firebase config (chỉ cần databaseURL)
+    const firebaseConfig = {
+      databaseURL: "https://xdkiot-default-rtdb.firebaseio.com"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // 👉 ĐÚNG ĐƯỜNG DẪN JSON CỦA EM
+    const stateRef = ref(db, "led/state");
+
+    let state = {
+      PIN1: 0,
+      PIN2: 0,
+      PIN3: 0,
+      PIN4: 0
+    };
+
+    // ===== REALTIME LISTENER =====
+    onValue(stateRef, snapshot => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      state = { ...state, ...data };
+      render();
+    });
+
+    function render() {
+      Object.keys(state).forEach(pin => {
+        if (!document.getElementById(pin)) return;
+
+        const btn = document.getElementById(pin);
+        if (state[pin] === 1) {
+          btn.textContent = "ON";
+          btn.className = "btn on";
+        } else {
+          btn.textContent = "OFF";
+          btn.className = "btn off";
+        }
+      });
+    }
+
+    // ===== GHI NGƯỢC LÊN /led/state =====
+    window.toggle = function(pin) {
+      const newValue = state[pin] === 1 ? 0 : 1;
+      update(stateRef, { [pin]: newValue });
+    };
+  </script>
+</body>
 </html>
