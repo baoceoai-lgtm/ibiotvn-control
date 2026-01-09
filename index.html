@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        font-family: Arial, sans-serif;
+        overflow: hidden; /* Tránh cuộn trang */
+      }
+
+      .container {
+        display: grid;
+        grid-template-columns: 1fr 1fr; /* Chia 2 cột */
+        grid-template-rows: 1fr 1fr;    /* Chia 2 hàng */
+        height: 100vh;                 /* Full chiều cao màn hình */
+        gap: 10px;                     /* Khoảng cách giữa các nút */
+        padding: 10px;
+        box-sizing: border-box;
+        background-color: #121212;     /* Nền tối cho hiện đại */
+      }
+
+      .control-btn {
+        border: none;
+        border-radius: 15px;
+        color: white;
+        font-size: 1.5rem;
+        font-weight: bold;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: transform 0.1s, background-color 0.3s;
+        text-transform: uppercase;
+      }
+
+      /* Trạng thái OFF */
+      .off { background-color: #333333; color: #888; }
+      
+      /* Trạng thái ON */
+      .on { background-color: #4CAF50; color: white; box-shadow: 0 0 20px rgba(76, 175, 80, 0.4); }
+
+      .control-btn:active {
+        transform: scale(0.95); /* Hiệu ứng nhấn nút */
+      }
+
+      .status-text {
+        font-size: 0.8rem;
+        margin-top: 5px;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+
+    <div class="container">
+      <button id="btn1" class="control-btn off" onclick="toggle(this, 'Thiết bị 1')">
+        Nút 1 <span class="status-text">OFF</span>
+      </button>
+      <button id="btn2" class="control-btn off" onclick="toggle(this, 'Thiết bị 2')">
+        Nút 2 <span class="status-text">OFF</span>
+      </button>
+      <button id="btn3" class="control-btn off" onclick="toggle(this, 'Thiết bị 3')">
+        Nút 3 <span class="status-text">OFF</span>
+      </button>
+      <button id="btn4" class="control-btn off" onclick="toggle(this, 'Thiết bị 4')">
+        Nút 4 <span class="status-text">OFF</span>
+      </button>
+    </div>
+
+    <script>
+      function toggle(btn, deviceName) {
+        var isOff = btn.classList.contains('off');
+        var newStatus = isOff ? 'ON' : 'OFF';
+        
+        // Gửi lệnh về Google Apps Script (Backend)
+        fetch()
+          .withSuccessHandler(function(res) {
+            // Nếu gửi lệnh thành công thì mới đổi màu nút
+            if (isOff) {
+              btn.classList.remove('off');
+              btn.classList.add('on');
+              btn.querySelector('.status-text').innerText = 'ON';
+            } else {
+              btn.classList.remove('on');
+              btn.classList.add('off');
+              btn.querySelector('.status-text').innerText = 'OFF';
+            }
+          })
+          .controlDevice(deviceName, newStatus);
+      }
+    </script>
+  </body>
+</html>
