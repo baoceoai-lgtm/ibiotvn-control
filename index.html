@@ -1,141 +1,440 @@
 <!doctype html>
-<html>
+<html lang="vi">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <title>IoT Realtime Control</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>IoT Control • Firebase RTDB</title>
 
   <style>
-    body {
-      margin: 0;
-      background: #0f172a;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      color: #fff;
+    :root{
+      --bg:#0b1220;
+      --panel:#0f1a2e;
+      --panel2:#0a1222;
+      --line:rgba(255,255,255,.10);
+      --text:#eaf0ff;
+      --sub:rgba(234,240,255,.70);
+      --ok:#16a34a;
+      --warn:#f59e0b;
+      --info:#38bdf8;
+      --off:#334155;
+      --shadow: 0 18px 40px rgba(0,0,0,.35);
+      --radius:18px;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--text);background:var(--bg)}
+    .screen{min-height:100vh;display:flex;flex-direction:column}
+    .topbar{
+      height:8vh;min-height:56px;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(180deg,#050812,#070c16);
+      border-bottom:1px solid var(--line);
+      font-weight:900;letter-spacing:1px;font-size:18px;
+      position:sticky;top:0;z-index:10;
+    }
+    .wrap{flex:1;display:flex;flex-direction:column;gap:12px;padding:12px}
+    .card{
+      background:linear-gradient(180deg,var(--panel2),var(--panel));
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .card-header{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);
+    }
+    .title{
+      display:flex;flex-direction:column;gap:2px;
+    }
+    .title .name{font-size:18px;font-weight:900}
+    .title .hint{font-size:12px;color:var(--sub)}
+    .badge{
+      font-size:12px;font-weight:800;padding:6px 10px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);
+      color:var(--sub);
+      background:rgba(255,255,255,.04);
+      white-space:nowrap;
+    }
+    .pins{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:10px;
+      padding:12px;
     }
 
-    .screen {
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
+    /* PIN ROW */
+    .pin-row{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 12px;
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:16px;
+      background:rgba(255,255,255,.03);
+    }
+    .pin-left{
+      display:flex;flex-direction:column;gap:4px;
+    }
+    .pin-left .pin-name{font-size:20px;font-weight:950}
+    .pin-left .pin-desc{font-size:12px;color:var(--sub)}
+    .pin-state{
+      display:flex;align-items:center;gap:10px;
+    }
+    .state-pill{
+      font-size:12px;font-weight:950;
+      padding:6px 10px;border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      min-width:66px;text-align:center;
+    }
+    .state-pill.on{background:rgba(22,163,74,.18);border-color:rgba(22,163,74,.35);color:#b8ffd2}
+    .state-pill.off{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.30);color:#ffd0d0}
+
+    /* SWITCH */
+    .switch{position:relative;width:92px;height:48px;flex:0 0 auto}
+    .switch input{display:none}
+    .slider{
+      position:absolute;inset:0;border-radius:999px;background:var(--off);
+      transition:.2s ease;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+    }
+    .slider:before{
+      content:"";position:absolute;left:4px;top:4px;width:40px;height:40px;border-radius:50%;
+      background:#fff;transition:.2s ease;box-shadow:0 10px 20px rgba(0,0,0,.45);
+    }
+    .switch input:checked + .slider{background:var(--ok)}
+    .switch input:checked + .slider:before{transform:translateX(44px)}
+
+    /* ACTIONS */
+    .actions{
+      display:flex;gap:10px;padding:12px;border-top:1px solid rgba(255,255,255,.06);
+      background:rgba(0,0,0,.12);
+    }
+    .btn{
+      flex:1;border:none;border-radius:16px;padding:14px 12px;
+      font-size:16px;font-weight:950;cursor:pointer;
+      color:#07101f;transition:transform .06s ease, filter .12s ease;
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      user-select:none;
+    }
+    .btn:active{transform:scale(.985);filter:brightness(.95)}
+    .btn.info{background:var(--info)}
+    .btn.warn{background:var(--warn)}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+
+    /* STATUS */
+    .status{
+      padding:10px 12px;font-size:12px;color:var(--sub);
+      border-top:1px solid rgba(255,255,255,.06);
+      background:rgba(255,255,255,.03);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
 
-    .header {
-      height: 8vh;
-      min-height: 52px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 22px;
-      font-weight: 900;
-      background: #020617;
+    /* SETTINGS */
+    details{border-top:1px solid rgba(255,255,255,.06)}
+    summary{
+      list-style:none;cursor:pointer;padding:12px 14px;
+      font-weight:900;color:var(--text);
+      display:flex;align-items:center;justify-content:space-between;
     }
-
-    .block {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 24px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+    summary::-webkit-details-marker{display:none}
+    .settings{
+      padding:0 14px 14px;display:grid;gap:10px;
     }
-
-    .name {
-      font-size: 28px;
-      font-weight: 900;
+    .field{
+      display:flex;flex-direction:column;gap:6px;
     }
-
-    .btn {
-      width: 140px;
-      height: 60px;
-      border-radius: 18px;
-      border: none;
-      font-size: 18px;
-      font-weight: 900;
-      cursor: pointer;
+    .field label{font-size:12px;color:var(--sub);font-weight:800}
+    .field input{
+      width:100%;padding:12px 12px;border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(0,0,0,.20);
+      color:var(--text);
+      outline:none;
     }
-
-    .on { background: #16a34a; color: #03160a; }
-    .off { background: #ef4444; color: #240202; }
+    .note{font-size:12px;color:var(--sub);line-height:1.35}
+    .safe-zone{height:8vh;min-height:54px}
   </style>
 </head>
 
 <body>
   <div class="screen">
-    <div class="header">IOT REALTIME CONTROL</div>
+    <div class="topbar">IOT CONTROL • FIREBASE RTDB</div>
 
-    <div class="block">
-      <div class="name">PIN1</div>
-      <button id="PIN1" class="btn off" onclick="toggle('PIN1')">OFF</button>
-    </div>
+    <div class="wrap">
+      <div class="card">
+        <div class="card-header">
+          <div class="title">
+            <div class="name">Điều khiển 5 PIN</div>
+            <div class="hint">Chỉ gửi khi bấm “GỬI”. Tự cập nhật UI theo dữ liệu realtime.</div>
+          </div>
+          <div class="badge" id="connBadge">● Đang khởi tạo…</div>
+        </div>
 
-    <div class="block">
-      <div class="name">PIN2</div>
-      <button id="PIN2" class="btn off" onclick="toggle('PIN2')">OFF</button>
-    </div>
+        <div class="pins" id="pinList">
+          <!-- rows injected -->
+        </div>
 
-    <div class="block">
-      <div class="name">PIN3</div>
-      <button id="PIN3" class="btn off" onclick="toggle('PIN3')">OFF</button>
-    </div>
+        <div class="actions">
+          <button class="btn info" id="btnRefresh" type="button">🔄 CẬP NHẬT</button>
+          <button class="btn warn" id="btnSend" type="button">📤 GỬI</button>
+        </div>
 
-    <div class="block">
-      <div class="name">PIN4</div>
-      <button id="PIN4" class="btn off" onclick="toggle('PIN4')">OFF</button>
+        <div class="status" id="status">Sẵn sàng.</div>
+
+        <details>
+          <summary>
+            <span>⚙️ Cấu hình kết nối</span>
+            <span style="color:var(--sub);font-weight:900">mở/đóng</span>
+          </summary>
+          <div class="settings">
+            <div class="field">
+              <label>Firebase Database URL</label>
+              <input id="dbUrl" value="https://xdkiot-default-rtdb.firebaseio.com" />
+            </div>
+            <div class="field">
+              <label>Node path</label>
+              <input id="nodePath" value="/led/state" />
+            </div>
+            <div class="field">
+              <label>Auth token (tuỳ chọn)</label>
+              <input id="authToken" placeholder="Nếu bị Permission denied thì dán token vào đây" />
+            </div>
+            <div class="note">
+              • Nếu Firebase Rules đang mở (test) thì để trống token vẫn chạy.<br/>
+              • Nếu Rules yêu cầu xác thực, hãy thêm token để đọc/ghi REST & stream.
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn info" type="button" id="btnReconnect">🔌 Kết nối lại</button>
+              <button class="btn warn" type="button" id="btnReadOnce">📥 Đọc 1 lần</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="safe-zone"></div>
     </div>
   </div>
 
-  <!-- ===== FIREBASE REALTIME SDK ===== -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+  <script>
+    // ====== UI model ======
+    const PINS = [
+      { key: "PINtest", label: "PINtest", desc: "GPIO 2 (test đèn)" },
+      { key: "PIN1",    label: "PIN1",    desc: "GPIO 16" },
+      { key: "PIN2",    label: "PIN2",    desc: "GPIO 17" },
+      { key: "PIN3",    label: "PIN3",    desc: "GPIO 18" },
+      { key: "PIN4",    label: "PIN4",    desc: "GPIO 19" },
+    ];
 
-    // 🔧 Firebase config (chỉ cần databaseURL)
-    const firebaseConfig = {
-      databaseURL: "https://xdkiot-default-rtdb.firebaseio.com"
+    // local state (draft) – chỉ gửi khi bấm GỬI
+    let draft = { PINtest:0, PIN1:0, PIN2:0, PIN3:0, PIN4:0 };
+    // server state (realtime)
+    let server = { ...draft };
+
+    // ====== Helpers ======
+    const $ = (id) => document.getElementById(id);
+    const setStatus = (msg) => { $("status").textContent = msg; };
+    const setBadge = (msg, ok=true) => {
+      $("connBadge").textContent = "● " + msg;
+      $("connBadge").style.color = ok ? "#b8ffd2" : "#ffd0d0";
+      $("connBadge").style.borderColor = ok ? "rgba(22,163,74,.35)" : "rgba(239,68,68,.35)";
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+    function normalizeUrl(url) {
+      return url.replace(/\/+$/,""); // remove trailing slash
+    }
 
-    // 👉 ĐÚNG ĐƯỜNG DẪN JSON CỦA EM
-    const stateRef = ref(db, "led/state");
+    function buildRestUrl() {
+      const base = normalizeUrl($("dbUrl").value.trim());
+      const path = $("nodePath").value.trim().replace(/^\/?/, "/");
+      const token = $("authToken").value.trim();
+      // REST endpoint needs .json
+      let u = base + path + ".json";
+      if (token) u += (u.includes("?") ? "&" : "?") + "auth=" + encodeURIComponent(token);
+      return u;
+    }
 
-    let state = {
-      PIN1: 0,
-      PIN2: 0,
-      PIN3: 0,
-      PIN4: 0
-    };
+    function buildStreamUrl() {
+      // Firebase streaming REST uses same .json URL; EventSource sends Accept: text/event-stream automatically
+      return buildRestUrl();
+    }
 
-    // ===== REALTIME LISTENER =====
-    onValue(stateRef, snapshot => {
-      const data = snapshot.val();
-      if (!data) return;
+    // ====== Render UI ======
+    function renderPins() {
+      const wrap = $("pinList");
+      wrap.innerHTML = "";
 
-      state = { ...state, ...data };
-      render();
-    });
+      PINS.forEach(p => {
+        const v = Number(draft[p.key]) === 1 ? 1 : 0;
+        const pillClass = v ? "state-pill on" : "state-pill off";
+        const pillText  = v ? "ON (1)" : "OFF (0)";
 
-    function render() {
-      Object.keys(state).forEach(pin => {
-        if (!document.getElementById(pin)) return;
+        const row = document.createElement("div");
+        row.className = "pin-row";
+        row.innerHTML = `
+          <div class="pin-left">
+            <div class="pin-name">${p.label}</div>
+            <div class="pin-desc">${p.desc}</div>
+          </div>
+          <div class="pin-state">
+            <div class="${pillClass}" id="pill_${p.key}">${pillText}</div>
+            <label class="switch">
+              <input type="checkbox" id="sw_${p.key}" ${v ? "checked" : ""}>
+              <span class="slider"></span>
+            </label>
+          </div>
+        `;
+        wrap.appendChild(row);
 
-        const btn = document.getElementById(pin);
-        if (state[pin] === 1) {
-          btn.textContent = "ON";
-          btn.className = "btn on";
-        } else {
-          btn.textContent = "OFF";
-          btn.className = "btn off";
-        }
+        // switch change = update draft only (no network)
+        row.querySelector(`#sw_${p.key}`).addEventListener("change", (e) => {
+          draft[p.key] = e.target.checked ? 1 : 0;
+          updatePill(p.key);
+          if (navigator.vibrate) navigator.vibrate(10);
+        });
       });
     }
 
-    // ===== GHI NGƯỢC LÊN /led/state =====
-    window.toggle = function(pin) {
-      const newValue = state[pin] === 1 ? 0 : 1;
-      update(stateRef, { [pin]: newValue });
-    };
+    function updatePill(key) {
+      const v = Number(draft[key]) === 1 ? 1 : 0;
+      const pill = $(`pill_${key}`);
+      if (!pill) return;
+      pill.className = v ? "state-pill on" : "state-pill off";
+      pill.textContent = v ? "ON (1)" : "OFF (0)";
+    }
+
+    function applyServerToDraft() {
+      // sync draft from server (when CẬP NHẬT hoặc stream event)
+      PINS.forEach(p => {
+        if (server[p.key] === 0 || server[p.key] === 1) draft[p.key] = server[p.key];
+      });
+      // refresh UI controls
+      PINS.forEach(p => {
+        const sw = document.getElementById(`sw_${p.key}`);
+        if (sw) sw.checked = Number(draft[p.key]) === 1;
+        updatePill(p.key);
+      });
+    }
+
+    // ====== REST: Read once / Write patch ======
+    async function readOnce() {
+      const url = buildRestUrl();
+      setStatus("Đang đọc dữ liệu…");
+      try{
+        const res = await fetch(url, { method:"GET" });
+        const data = await res.json();
+        if (!res.ok) throw new Error((data && data.error) ? data.error : ("HTTP " + res.status));
+
+        if (data && typeof data === "object") {
+          server = { ...server, ...data };
+          applyServerToDraft();
+        }
+        setStatus("✅ Đã đọc trạng thái từ Firebase.");
+        setBadge("Đang kết nối", true);
+      }catch(err){
+        setStatus("❌ Lỗi đọc: " + err.message);
+        setBadge("Lỗi kết nối", false);
+      }
+    }
+
+    async function sendPatch() {
+      const url = buildRestUrl();
+      const payload = {};
+      PINS.forEach(p => payload[p.key] = Number(draft[p.key]) === 1 ? 1 : 0);
+
+      setStatus("Đang gửi lệnh…");
+      try{
+        const res = await fetch(url, {
+          method:"PATCH",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(()=> ({}));
+        if (!res.ok) throw new Error((data && data.error) ? data.error : ("HTTP " + res.status));
+
+        setStatus("✅ Đã gửi lên Firebase.");
+        setBadge("Đang kết nối", true);
+      }catch(err){
+        setStatus("❌ Lỗi gửi: " + err.message);
+        setBadge("Lỗi kết nối", false);
+      }
+    }
+
+    // ====== REALTIME via SSE (EventSource) ======
+    let es = null;
+    function closeStream() {
+      if (es) { try{ es.close(); }catch(_){} }
+      es = null;
+    }
+
+    function openStream() {
+      closeStream();
+      const url = buildStreamUrl();
+
+      try{
+        es = new EventSource(url);
+      }catch(e){
+        setStatus("❌ Không tạo được EventSource: " + e.message);
+        setBadge("Lỗi kết nối", false);
+        return;
+      }
+
+      setBadge("Đang kết nối", true);
+      setStatus("📡 Đang nghe realtime…");
+
+      // Firebase stream sends "put" / "patch" events
+      es.addEventListener("open", () => {
+        setBadge("Realtime ON", true);
+        setStatus("📡 Realtime ON. Dữ liệu đổi sẽ cập nhật UI.");
+      });
+
+      es.addEventListener("error", () => {
+        setBadge("Realtime lỗi", false);
+        setStatus("❌ Realtime bị lỗi/đứt. Bấm “Kết nối lại” hoặc kiểm tra Rules/Token.");
+      });
+
+      const handle = (ev) => {
+        if (!ev || !ev.data) return;
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch(_) { return; }
+        // msg: { path:"/", data:{...} } or { path:"/PIN2", data:1 }
+        const path = msg.path || "";
+        const data = msg.data;
+
+        if (path === "/" && data && typeof data === "object") {
+          server = { ...server, ...data };
+          applyServerToDraft();
+          return;
+        }
+
+        if (path.startsWith("/")) {
+          const key = path.slice(1);
+          if (key in server) {
+            const v = (data === true) ? 1 : (data === false) ? 0 : Number(data);
+            if (v === 0 || v === 1) {
+              server[key] = v;
+              applyServerToDraft();
+            }
+          }
+        }
+      };
+
+      es.addEventListener("put", handle);
+      es.addEventListener("patch", handle);
+      // some environments might send "message" too
+      es.addEventListener("message", handle);
+    }
+
+    // ====== Bind buttons ======
+    $("btnRefresh").addEventListener("click", () => readOnce());
+    $("btnSend").addEventListener("click", () => sendPatch());
+    $("btnReconnect").addEventListener("click", () => {
+      setStatus("🔌 Đang kết nối lại realtime…");
+      openStream();
+    });
+    $("btnReadOnce").addEventListener("click", () => readOnce());
+
+    // ====== Init ======
+    renderPins();
+    // initial read + realtime stream
+    readOnce().finally(() => openStream());
   </script>
 </body>
 </html>
