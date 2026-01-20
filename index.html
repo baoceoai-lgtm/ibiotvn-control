@@ -209,6 +209,34 @@
         </details>
       </div>
 
+      <!-- ===== VOICE COMMAND (BOTTOM) ===== -->
+      <div class="card" id="voiceCard">
+        <div class="card-header">
+          <div class="title">
+            <div class="name">🎙️ Nhận lệnh giọng nói</div>
+            <div class="hint">Nói: “bật pin 1”, “tắt thiết bị 2”, “bật tất cả”…</div>
+          </div>
+          <div class="badge" id="voiceBadge">● Sẵn sàng</div>
+        </div>
+
+        <div style="padding:12px; display:grid; gap:10px;">
+          <textarea id="voiceBox" placeholder="Lệnh giọng nói sẽ hiện ở đây... (cũng có thể gõ tay)"
+            style="width:100%;min-height:90px;resize:vertical;border-radius:16px;border:1px solid rgba(255,255,255,.12);
+                   background:rgba(0,0,0,.20);color:var(--text);padding:12px;outline:none;font-size:15px;line-height:1.35;"></textarea>
+
+          <div style="display:flex;gap:10px;">
+            <button class="btn info" type="button" id="btnVoiceStart">🎤 BẮT ĐẦU</button>
+            <button class="btn warn" type="button" id="btnVoiceStop">⏹ DỪNG</button>
+            <button class="btn" style="background:#e11d48;color:#fff" type="button" id="btnVoiceClear">🗑 XOÁ</button>
+          </div>
+
+          <div class="note" id="voiceHint">
+            • Chrome/Edge sẽ hỗ trợ tốt nhất. Nếu không nhận mic, hãy cấp quyền micro cho trang.<br/>
+            • Lệnh sẽ cập nhật trạng thái công tắc (draft). Muốn gửi lên Firebase thì bấm nút “📤 GỬI”.
+          </div>
+        </div>
+      </div>
+
       <div class="safe-zone"></div>
     </div>
   </div>
