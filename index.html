@@ -1,535 +1,351 @@
-<!doctype html>
-<html lang="vi">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#0b1220" />
-  <title>ĐIỀU KHIỂN IOT - IOT CONTROL</title>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include <UniversalTelegramBot.h>
 
-  <style>
-    :root{
-      --bg:#0b1220;
-      --panel:#0f1a2e;
-      --panel2:#0a1222;
-      --line:rgba(255,255,255,.10);
-      --text:#eaf0ff;
-      --sub:rgba(234,240,255,.70);
-      --ok:#16a34a;
-      --warn:#f59e0b;
-      --info:#38bdf8;
-      --off:#334155;
-      --shadow: 0 18px 40px rgba(0,0,0,.35);
-      --radius:18px;
+// ===================== WIFI =====================
+const char* ssid = "TP-Link_F655";
+const char* pass = "123654789";
+
+// ===================== FIREBASE =====================
+const char* FIREBASE_HOST = "xdkiot-default-rtdb.firebaseio.com";
+String FIREBASE_AUTH = ""; // nếu DB có auth token thì điền
+String FIREBASE_PATH = "/led/state.json"; // node realtime: /led/state
+
+// ===================== GPIO MAP (5 chân) =====================
+const int PINtest = 2;   // GPIO2  -> idx 0
+const int PIN1    = 16;  // GPIO16 -> idx 1
+const int PIN2    = 17;  // GPIO17 -> idx 2
+const int PIN3    = 18;  // GPIO18 -> idx 3
+const int PIN4    = 19;  // GPIO19 -> idx 4
+
+int gpioMap[5] = { PINtest, PIN1, PIN2, PIN3, PIN4 };
+const char* keyMap[5] = { "PINtest", "PIN1", "PIN2", "PIN3", "PIN4" };
+
+// ===================== TELEGRAM =====================
+#define BOT_TOKEN "8572235039:AAH92Vix2eMLXdgEanuLB72-DxM9wjQalMY"
+
+WiFiClientSecure tgClient;
+UniversalTelegramBot bot(BOT_TOKEN, tgClient);
+
+unsigned long lastTgPollMs = 0;
+const unsigned long TG_POLL_MS = 800;
+
+// ===================== TELEGRAM MENU (Reply Keyboard) =====================
+String menuKeyboard =
+  "[[\"Kiểm tra tín hiệu ON\",\"Kiểm tra tín hiệu OFF\"],"
+   "[\"Thiết bị 1 ON\",\"Thiết bị 1 OFF\"],"
+   "[\"Thiết bị 2 ON\",\"Thiết bị 2 OFF\"],"
+   "[\"Thiết bị 3 ON\",\"Thiết bị 3 OFF\"],"
+   "[\"Thiết bị 4 ON\",\"Thiết bị 4 OFF\"],"
+   "[\"📋 MENU\"]]";
+
+void showMenu(const String& chat_id) {
+  bot.sendMessageWithReplyKeyboard(
+    chat_id,
+    "🎛 MENU ĐIỀU KHIỂN ESP32",
+    "",
+    menuKeyboard,
+    true, false, false
+  );
+}
+
+// ===================== FIREBASE CLIENTS =====================
+WiFiClientSecure sseClient;
+WiFiClientSecure fbWriteClient;
+
+String lineBuf = "";
+String sseMsgData = "";
+unsigned long lastStreamByteMs = 0;
+unsigned long lastReconnectTryMs = 0;
+
+// ===================== UTILS =====================
+String buildFirebasePath(const String& basePath) {
+  if (FIREBASE_AUTH.length() == 0) return basePath;
+  if (basePath.indexOf('?') >= 0) return basePath + "&auth=" + FIREBASE_AUTH;
+  return basePath + "?auth=" + FIREBASE_AUTH;
+}
+
+// ===================== GPIO APPLY =====================
+void applyPinByIndex(int idx, int v) {
+  if (idx < 0 || idx > 4) return;
+  v = (v != 0) ? 1 : 0;
+  digitalWrite(gpioMap[idx], v ? HIGH : LOW);
+  Serial.printf("✅ GPIO %s = %d\n", keyMap[idx], v);
+}
+
+void applyPinByName(const String& name, int v) {
+  for (int i = 0; i < 5; i++) {
+    if (name == keyMap[i]) {
+      applyPinByIndex(i, v);
+      return;
     }
-    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--text);background:var(--bg)}
-    .screen{min-height:100vh;display:flex;flex-direction:column}
-    .topbar{
-      height:8vh;min-height:56px;display:flex;align-items:center;justify-content:center;
-      background:linear-gradient(180deg,#050812,#070c16);
-      border-bottom:1px solid var(--line);
-      font-weight:900;letter-spacing:1px;font-size:18px;
-      position:sticky;top:0;z-index:10;
+  }
+  Serial.println("⚠️ Unknown key: " + name);
+}
+
+// ===================== FIREBASE PATCH =====================
+bool firebasePatchKey(const String& key, int v) {
+  fbWriteClient.stop();
+  fbWriteClient.setInsecure();
+
+  String path = buildFirebasePath(FIREBASE_PATH);
+  String payload = String("{\"") + key + "\":" + String((v != 0) ? 1 : 0) + "}";
+
+  if (!fbWriteClient.connect(FIREBASE_HOST, 443)) {
+    Serial.println("❌ PATCH connect failed");
+    return false;
+  }
+
+  fbWriteClient.print(
+    String("PATCH ") + path + " HTTP/1.1\r\n" +
+    "Host: " + FIREBASE_HOST + "\r\n" +
+    "Content-Type: application/json\r\n" +
+    "Connection: close\r\n" +
+    "Content-Length: " + String(payload.length()) + "\r\n\r\n" +
+    payload
+  );
+
+  // đọc status line
+  unsigned long start = millis();
+  String status = "";
+  while (millis() - start < 4000) {
+    while (fbWriteClient.available()) {
+      char c = (char)fbWriteClient.read();
+      if (c == '\r') continue;
+      if (c == '\n') goto PATCH_DONE;
+      status += c;
     }
-    .wrap{flex:1;display:flex;flex-direction:column;gap:12px;padding:12px}
-    .card{
-      background:linear-gradient(180deg,var(--panel2),var(--panel));
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      overflow:hidden;
+    delay(1);
+  }
+PATCH_DONE:
+  fbWriteClient.stop();
+
+  Serial.println("PATCH STATUS: " + status);
+  int code = 0;
+  int sp1 = status.indexOf(' ');
+  if (sp1 > 0) code = status.substring(sp1 + 1).toInt();
+  return (code >= 200 && code < 300);
+}
+
+// ===================== FIREBASE SSE (Realtime Listen) =====================
+bool openSseStream() {
+  sseClient.stop();
+  sseClient.setInsecure();
+
+  String path = buildFirebasePath(FIREBASE_PATH);
+
+  if (!sseClient.connect(FIREBASE_HOST, 443)) {
+    Serial.println("❌ SSE connect failed");
+    return false;
+  }
+
+  sseClient.print(String("GET ") + path + " HTTP/1.1\r\n");
+  sseClient.print(String("Host: ") + FIREBASE_HOST + "\r\n");
+  sseClient.print("Accept: text/event-stream\r\n");
+  sseClient.print("Connection: keep-alive\r\n\r\n");
+
+  // đọc status line
+  unsigned long start = millis();
+  String status = "";
+  while (millis() - start < 4000) {
+    while (sseClient.available()) {
+      char c = (char)sseClient.read();
+      if (c == '\r') continue;
+      if (c == '\n') goto SSE_STATUS_DONE;
+      status += c;
     }
-    .card-header{
-      display:flex;align-items:center;justify-content:space-between;
-      padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);
+    delay(1);
+  }
+SSE_STATUS_DONE:
+  Serial.println("SSE STATUS: " + status);
+
+  int code = 0;
+  int sp1 = status.indexOf(' ');
+  if (sp1 > 0) code = status.substring(sp1 + 1).toInt();
+
+  if (code != 200) {
+    Serial.println("❌ SSE HTTP not 200");
+    sseClient.stop();
+    return false;
+  }
+
+  Serial.println("✅ SSE stream opened!");
+  lastStreamByteMs = millis();
+  return true;
+}
+
+void handleFirebaseEvent(const String& jsonData) {
+  StaticJsonDocument<1024> doc;
+  DeserializationError err = deserializeJson(doc, jsonData);
+  if (err) {
+    Serial.println("❌ JSON parse error: " + String(err.c_str()));
+    Serial.println("RAW: " + jsonData);
+    return;
+  }
+
+  String path = doc["path"] | "";
+  JsonVariant data = doc["data"];
+
+  // Snapshot: {"path":"/","data":{...}}
+  if (path == "/" && data.is<JsonObject>()) {
+    for (JsonPair kv : data.as<JsonObject>()) {
+      String key = kv.key().c_str();
+      int v = 0;
+      if (kv.value().is<int>()) v = kv.value().as<int>();
+      else if (kv.value().is<bool>()) v = kv.value().as<bool>() ? 1 : 0;
+      else if (kv.value().is<const char*>()) v = String(kv.value().as<const char*>()).toInt();
+      applyPinByName(key, v);
     }
-    .title{
-      display:flex;flex-direction:column;gap:2px;
+    return;
+  }
+
+  // Update: {"path":"/PIN1","data":1}
+  if (path.startsWith("/")) {
+    String key = path.substring(1);
+    int v = 0;
+    if (data.is<int>()) v = data.as<int>();
+    else if (data.is<bool>()) v = data.as<bool>() ? 1 : 0;
+    else if (data.is<const char*>()) v = String(data.as<const char*>()).toInt();
+    applyPinByName(key, v);
+  }
+}
+
+void processSseLine(const String& line) {
+  if (line.startsWith(":")) return; // keep alive
+
+  if (line.startsWith("data:")) {
+    String payload = line.substring(5);
+    payload.trim();
+    if (payload.length() > 0) {
+      handleFirebaseEvent(payload); // xử lý NGAY
     }
-    .title .name{font-size:18px;font-weight:900}
-    .title .hint{font-size:12px;color:var(--sub)}
-    .badge{
-      font-size:12px;font-weight:800;padding:6px 10px;border-radius:999px;
-      border:1px solid rgba(255,255,255,.10);
-      color:var(--sub);
-      background:rgba(255,255,255,.04);
-      white-space:nowrap;
+  }
+}
+
+void firebaseRealtimeLoop() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  if (!sseClient.connected()) {
+    if (millis() - lastReconnectTryMs < 2000) return;
+    lastReconnectTryMs = millis();
+    lineBuf = "";
+    sseMsgData = "";
+    Serial.println("Opening SSE stream...");
+    openSseStream();
+    return;
+  }
+
+  while (sseClient.available()) {
+    char c = (char)sseClient.read();
+    lastStreamByteMs = millis();
+
+    if (c == '\r') continue;
+    if (c == '\n') {
+      processSseLine(lineBuf);
+      lineBuf = "";
+    } else {
+      lineBuf += c;
+      if (lineBuf.length() > 800) lineBuf = "";
     }
-    .pins{
-      display:grid;
-      grid-template-columns:1fr;
-      gap:10px;
-      padding:12px;
-    }
+  }
 
-    /* PIN ROW */
-    .pin-row{
-      display:flex;align-items:center;justify-content:space-between;
-      padding:14px 12px;
-      border:1px solid rgba(255,255,255,.08);
-      border-radius:16px;
-      background:rgba(255,255,255,.03);
-    }
-    .pin-left{
-      display:flex;flex-direction:column;gap:4px;
-    }
-    .pin-left .pin-name{font-size:20px;font-weight:950}
-    .pin-left .pin-desc{font-size:12px;color:var(--sub)}
-    .pin-state{
-      display:flex;align-items:center;gap:10px;
-    }
-    .state-pill{
-      font-size:12px;font-weight:950;
-      padding:6px 10px;border-radius:999px;
-      background:rgba(255,255,255,.06);
-      border:1px solid rgba(255,255,255,.10);
-      min-width:66px;text-align:center;
-    }
-    .state-pill.on{background:rgba(22,163,74,.18);border-color:rgba(22,163,74,.35);color:#b8ffd2}
-    .state-pill.off{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.30);color:#ffd0d0}
+  // timeout -> reconnect
+  if (millis() - lastStreamByteMs > 45000) {
+    Serial.println("⏱ SSE timeout -> reconnect");
+    sseClient.stop();
+  }
+}
 
-    /* SWITCH */
-    .switch{position:relative;width:92px;height:48px;flex:0 0 auto}
-    .switch input{display:none}
-    .slider{
-      position:absolute;inset:0;border-radius:999px;background:var(--off);
-      transition:.2s ease;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
-    }
-    .slider:before{
-      content:"";position:absolute;left:4px;top:4px;width:40px;height:40px;border-radius:50%;
-      background:#fff;transition:.2s ease;box-shadow:0 10px 20px rgba(0,0,0,.45);
-    }
-    .switch input:checked + .slider{background:var(--ok)}
-    .switch input:checked + .slider:before{transform:translateX(44px)}
+// ===================== TELEGRAM CONTROL =====================
+void applyAndSync(const String& chat_id, int idx, int v) {
+  applyPinByIndex(idx, v);
+  bool ok = firebasePatchKey(keyMap[idx], v);
+  bot.sendMessage(chat_id, ok ? "✅ OK" : "⚠️ Firebase lỗi", "");
+}
 
-    /* ACTIONS */
-    .actions{
-      display:flex;gap:10px;padding:12px;border-top:1px solid rgba(255,255,255,.06);
-      background:rgba(0,0,0,.12);
-    }
-    .btn{
-      flex:1;border:none;border-radius:16px;padding:14px 12px;
-      font-size:16px;font-weight:950;cursor:pointer;
-      color:#07101f;transition:transform .06s ease, filter .12s ease;
-      display:flex;align-items:center;justify-content:center;gap:8px;
-      user-select:none;
-    }
-    .btn:active{transform:scale(.985);filter:brightness(.95)}
-    .btn.info{background:var(--info)}
-    .btn.warn{background:var(--warn)}
-    .btn:disabled{opacity:.55;cursor:not-allowed}
+void handleTelegram() {
+  if (millis() - lastTgPollMs < TG_POLL_MS) return;
+  lastTgPollMs = millis();
 
-    /* STATUS */
-    .status{
-      padding:10px 12px;font-size:12px;color:var(--sub);
-      border-top:1px solid rgba(255,255,255,.06);
-      background:rgba(255,255,255,.03);
-      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-    }
+  int n = bot.getUpdates(bot.last_message_received + 1);
+  for (int i = 0; i < n; i++) {
+    String chat_id = bot.messages[i].chat_id;
+    String text = bot.messages[i].text;
+    text.trim();
 
-    /* SETTINGS */
-    details{border-top:1px solid rgba(255,255,255,.06)}
-    summary{
-      list-style:none;cursor:pointer;padding:12px 14px;
-      font-weight:900;color:var(--text);
-      display:flex;align-items:center;justify-content:space-between;
-    }
-    summary::-webkit-details-marker{display:none}
-    .settings{
-      padding:0 14px 14px;display:grid;gap:10px;
-    }
-    .field{
-      display:flex;flex-direction:column;gap:6px;
-    }
-    .field label{font-size:12px;color:var(--sub);font-weight:800}
-    .field input{
-      width:100%;padding:12px 12px;border-radius:14px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(0,0,0,.20);
-      color:var(--text);
-      outline:none;
-    }
-    .note{font-size:12px;color:var(--sub);line-height:1.35}
-    .safe-zone{height:8vh;min-height:54px}
-  </style>
-</head>
+    Serial.println("📩 Telegram: " + text);
 
-<body>
-  <div class="screen">
-    <div class="topbar">ĐIỀU KHIỂN IOT - IOT CONTROL vs1</div>
-
-    <div class="wrap">
-      <div class="card">
-        <div class="card-header">
-          <div class="title">
-            <div class="name">Điều khiển 5 thiết bị</div>
-            <div class="hint">Chỉ gửi khi bấm “GỬI”. Tự cập nhật UI theo dữ liệu realtime.</div>
-          </div>
-          <div class="badge" id="connBadge">● Đang khởi tạo…</div>
-        </div>
-
-        <div class="pins" id="pinList">
-          <!-- rows injected -->
-        </div>
-
-        <div class="actions">
-          <button class="btn info" id="btnRefresh" type="button">🔄 CẬP NHẬT</button>
-          <button class="btn warn" id="btnSend" type="button">📤 GỬI</button>
-        </div>
-
-        <div class="status" id="status">Sẵn sàng.</div>
-
-        <details>
-          <summary>
-            <span>⚙️ Cấu hình kết nối</span>
-            <span style="color:var(--sub);font-weight:900">mở/đóng</span>
-          </summary>
-          <div class="settings">
-            <div class="field">
-              <label>Firebase Database URL</label>
-              <input id="dbUrl" value="https://xdkiot-default-rtdb.firebaseio.com" />
-            </div>
-            <div class="field">
-              <label>Node path</label>
-              <input id="nodePath" value="/led/state" />
-            </div>
-            <div class="field">
-              <label>Auth token (tuỳ chọn)</label>
-              <input id="authToken" placeholder="Nếu bị Permission denied thì dán token vào đây" />
-            </div>
-            <div class="note">
-              • Nếu Firebase Rules đang mở (test) thì để trống token vẫn chạy.<br/>
-              • Nếu Rules yêu cầu xác thực, hãy thêm token để đọc/ghi REST & stream.
-            </div>
-            <div style="display:flex;gap:10px">
-              <button class="btn info" type="button" id="btnReconnect">🔌 Kết nối lại</button>
-              <button class="btn warn" type="button" id="btnReadOnce">📥 Đọc 1 lần</button>
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <!-- ===== VOICE COMMAND (BOTTOM) ===== -->
-      <div class="card" id="voiceCard">
-        <div class="card-header">
-          <div class="title">
-            <div class="name">🎙️ Nhận lệnh giọng nói</div>
-            <div class="hint">Nói: “bật pin 1”, “tắt thiết bị 2”, “bật tất cả”…</div>
-          </div>
-          <div class="badge" id="voiceBadge">● Sẵn sàng</div>
-        </div>
-
-        <div style="padding:12px; display:grid; gap:10px;">
-          <textarea id="voiceBox" placeholder="Lệnh giọng nói sẽ hiện ở đây... (cũng có thể gõ tay)"
-            style="width:100%;min-height:90px;resize:vertical;border-radius:16px;border:1px solid rgba(255,255,255,.12);
-                   background:rgba(0,0,0,.20);color:var(--text);padding:12px;outline:none;font-size:15px;line-height:1.35;"></textarea>
-
-          <div style="display:flex;gap:10px;">
-            <button class="btn info" type="button" id="btnVoiceStart">🎤 BẮT ĐẦU</button>
-            <button class="btn warn" type="button" id="btnVoiceStop">⏹ DỪNG</button>
-            <button class="btn" style="background:#e11d48;color:#fff" type="button" id="btnVoiceClear">🗑 XOÁ</button>
-          </div>
-
-          <div class="note" id="voiceHint">
-            • Chrome/Edge sẽ hỗ trợ tốt nhất. Nếu không nhận mic, hãy cấp quyền micro cho trang.<br/>
-            • Lệnh sẽ cập nhật trạng thái công tắc (draft). Muốn gửi lên Firebase thì bấm nút “📤 GỬI”.
-          </div>
-        </div>
-      </div>
-
-      <div class="safe-zone"></div>
-    </div>
-  </div>
-
-  <script>
-    // ====== UI model ======
-    const PINS = [
-      { key: "PINtest", label: "KT tín hiệu", desc: "GPIO 2 (test đèn)" },
-      { key: "PIN1",    label: "Thiết bị 01",    desc: "GPIO 16" },
-      { key: "PIN2",    label: "Thiết bị 02",    desc: "GPIO 17" },
-      { key: "PIN3",    label: "Thiết bị 03",    desc: "GPIO 18" },
-      { key: "PIN4",    label: "Thiết bị 04",    desc: "GPIO 19" },
-    ];
-
-    // local state (draft) – chỉ gửi khi bấm GỬI
-    let draft = { PINtest:0, PIN1:0, PIN2:0, PIN3:0, PIN4:0 };
-    // server state (realtime)
-    let server = { ...draft };
-
-    // ====== Helpers ======
-    const $ = (id) => document.getElementById(id);
-    const setStatus = (msg) => { $("status").textContent = msg; };
-    const setBadge = (msg, ok=true) => {
-      $("connBadge").textContent = "● " + msg;
-      $("connBadge").style.color = ok ? "#b8ffd2" : "#ffd0d0";
-      $("connBadge").style.borderColor = ok ? "rgba(22,163,74,.35)" : "rgba(239,68,68,.35)";
-    };
-
-    function normalizeUrl(url) {
-      return url.replace(/\/+$/,""); // remove trailing slash
-    }
-
-    function buildRestUrl() {
-      const base = normalizeUrl($("dbUrl").value.trim());
-      const path = $("nodePath").value.trim().replace(/^\/?/, "/");
-      const token = $("authToken").value.trim();
-      // REST endpoint needs .json
-      let u = base + path + ".json";
-      if (token) u += (u.includes("?") ? "&" : "?") + "auth=" + encodeURIComponent(token);
-      return u;
-    }
-
-    function buildStreamUrl() {
-      // Firebase streaming REST uses same .json URL; EventSource sends Accept: text/event-stream automatically
-      return buildRestUrl();
+    // show menu
+    if (text == "/start" || text == "📋 MENU") {
+      showMenu(chat_id);
+      continue;
     }
 
-    // ====== Render UI ======
-    function renderPins() {
-      const wrap = $("pinList");
-      wrap.innerHTML = "";
+    // UI buttons
+    if (text == "Kiểm tra tín hiệu ON")  { applyAndSync(chat_id, 0, 1); continue; }
+    if (text == "Kiểm tra tín hiệu OFF") { applyAndSync(chat_id, 0, 0); continue; }
 
-      PINS.forEach(p => {
-        const v = Number(draft[p.key]) === 1 ? 1 : 0;
-        const pillClass = v ? "state-pill on" : "state-pill off";
-        const pillText  = v ? "ON (1)" : "OFF (0)";
+    if (text == "Thiết bị 1 ON")  { applyAndSync(chat_id, 1, 1); continue; }
+    if (text == "Thiết bị 1 OFF") { applyAndSync(chat_id, 1, 0); continue; }
 
-        const row = document.createElement("div");
-        row.className = "pin-row";
-        row.innerHTML = `
-          <div class="pin-left">
-            <div class="pin-name">${p.label}</div>
-            <div class="pin-desc">${p.desc}</div>
-          </div>
-          <div class="pin-state">
-            <div class="${pillClass}" id="pill_${p.key}">${pillText}</div>
-            <label class="switch">
-              <input type="checkbox" id="sw_${p.key}" ${v ? "checked" : ""}>
-              <span class="slider"></span>
-            </label>
-          </div>
-        `;
-        wrap.appendChild(row);
+    if (text == "Thiết bị 2 ON")  { applyAndSync(chat_id, 2, 1); continue; }
+    if (text == "Thiết bị 2 OFF") { applyAndSync(chat_id, 2, 0); continue; }
 
-        // switch change = update draft only (no network)
-        row.querySelector(`#sw_${p.key}`).addEventListener("change", (e) => {
-          draft[p.key] = e.target.checked ? 1 : 0;
-          updatePill(p.key);
-          if (navigator.vibrate) navigator.vibrate(10);
-        });
-      });
+    if (text == "Thiết bị 3 ON")  { applyAndSync(chat_id, 3, 1); continue; }
+    if (text == "Thiết bị 3 OFF") { applyAndSync(chat_id, 3, 0); continue; }
+
+    if (text == "Thiết bị 4 ON")  { applyAndSync(chat_id, 4, 1); continue; }
+    if (text == "Thiết bị 4 OFF") { applyAndSync(chat_id, 4, 0); continue; }
+
+    // optional: nếu gõ /help
+    if (text == "/help") {
+      bot.sendMessage(chat_id, "Gõ /start để hiện MENU", "");
+      continue;
     }
 
-    function updatePill(key) {
-      const v = Number(draft[key]) === 1 ? 1 : 0;
-      const pill = $(`pill_${key}`);
-      if (!pill) return;
-      pill.className = v ? "state-pill on" : "state-pill off";
-      pill.textContent = v ? "ON (1)" : "OFF (0)";
-    }
+    bot.sendMessage(chat_id, "Không hiểu. Gõ /start để hiện MENU", "");
+  }
+}
 
-    function applyServerToDraft() {
-      // sync draft from server (when CẬP NHẬT hoặc stream event)
-      PINS.forEach(p => {
-        if (server[p.key] === 0 || server[p.key] === 1) draft[p.key] = server[p.key];
-      });
-      // refresh UI controls
-      PINS.forEach(p => {
-        const sw = document.getElementById(`sw_${p.key}`);
-        if (sw) sw.checked = Number(draft[p.key]) === 1;
-        updatePill(p.key);
-      });
-    }
+// ===================== SETUP / LOOP =====================
+void setup() {
+  Serial.begin(115200);
 
-    // ====== VOICE COMMAND (START / STOP / CLEAR) ======
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const voiceBadge = $("voiceBadge");
-    const voiceBox = $("voiceBox");
-    const btnVoiceStart = $("btnVoiceStart");
-    const btnVoiceStop = $("btnVoiceStop");
-    const btnVoiceClear = $("btnVoiceClear");
+  pinMode(PINtest, OUTPUT);
+  pinMode(PIN1, OUTPUT);
+  pinMode(PIN2, OUTPUT);
+  pinMode(PIN3, OUTPUT);
+  pinMode(PIN4, OUTPUT);
 
-    let vr = null;
-    let voiceListening = false;
+  digitalWrite(PINtest, LOW);
+  digitalWrite(PIN1, LOW);
+  digitalWrite(PIN2, LOW);
+  digitalWrite(PIN3, LOW);
+  digitalWrite(PIN4, LOW);
 
-    function setVoiceBadge(msg, ok=true){
-      voiceBadge.textContent = "● " + msg;
-      voiceBadge.style.color = ok ? "#b8ffd2" : "#ffd0d0";
-      voiceBadge.style.borderColor = ok ? "rgba(22,163,74,.35)" : "rgba(239,68,68,.35)";
-    }
+  WiFi.begin(ssid, pass);
+  Serial.print("Connecting WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ WiFi connected: " + WiFi.localIP().toString());
 
-    function normalizeCommand(s){
-      return (s || "")
-        .toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // bỏ dấu tiếng Việt
-        .replace(/[^a-z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-    }
+  tgClient.setInsecure();
+  sseClient.setInsecure();
+  fbWriteClient.setInsecure();
 
-    function applyCommandToDraft(cmdRaw){
-      const cmd = normalizeCommand(cmdRaw);
-      if(!cmd) return { ok:false, msg:"Không có lệnh." };
+  // mở realtime stream
+  openSseStream();
 
-      // Helpers
-      const setAll = (v) => {
-        PINS.forEach(p => draft[p.key] = v);
-        applyServerToDraft(); // dùng để refresh UI theo draft hiện tại
-      };
+  Serial.println("👉 Vào Telegram chat với bot và gõ /start để hiện MENU");
+}
 
-      // bật/tắt tất cả
-      if(cmd.includes("bat tat ca") || cmd.includes("bat het")){
-        PINS.forEach(p => draft[p.key] = 1);
-        applyServerToDraft();  // update UI
-        return { ok:true, msg:"Đã bật tất cả (draft)." };
-      }
-      if(cmd.includes("tat tat ca") || cmd.includes("tat het")){
-        PINS.forEach(p => draft[p.key] = 0);
-        applyServerToDraft();  // update UI
-        return { ok:true, msg:"Đã tắt tất cả (draft)." };
-      }
+void loop() {
+  // 1) nghe Firebase realtime
+  firebaseRealtimeLoop();
 
-      // Map số -> key
-      const mapNumToKey = (n) => {
-        if(n === 1) return "PIN1";
-        if(n === 2) return "PIN2";
-        if(n === 3) return "PIN3";
-        if(n === 4) return "PIN4";
-        return null;
-      };
-
-      // Nhận "pin test", "test", "pintest"
-      const isTest = (cmd.includes("pin test") || cmd.includes("pintest") || cmd === "test" || cmd.includes("den test"));
-
-      // Tìm số thiết bị/pin
-      const m = cmd.match(/\b(pin|thiet bi)\s*(\d)\b/);
-      const num = m ? Number(m[2]) : null;
-
-      const isOn  = cmd.startsWith("bat") || cmd.includes(" bat ") || cmd.includes("mo ");
-      const isOff = cmd.startsWith("tat") || cmd.includes(" tat ") || cmd.includes("dong ");
-
-      if(!isOn && !isOff){
-        return { ok:false, msg:"Không rõ bật hay tắt. Ví dụ: 'bật pin 1'." };
-      }
-
-      const on = isOn && !isOff; // ưu tiên bật nếu câu chứa "bật"
-      // Nếu câu có cả bật và tắt (hiếm) thì dùng ưu tiên bật; muốn chặt chẽ có thể refine sau.
-
-      // Lệnh cho PINtest
-      if(isTest){
-        if(turnOnOff("PINtest", on)) return { ok:true, msg:`Đã ${on?"bật":"tắt"} PINtest (draft).` };
-      }
-
-      // Lệnh theo số
-      if(num){
-        const key = mapNumToKey(num);
-        if(key && turnOnOff(key, on)) return { ok:true, msg:`Đã ${on?"bật":"tắt"} ${key} (draft).` };
-      }
-
-      return { ok:false, msg:"Không nhận ra thiết bị. Nói: 'bật pin 1', 'tắt thiết bị 2'..." };
-    }
-
-    function initVoice(){
-      if(!SpeechRecognition){
-        setVoiceBadge("Không hỗ trợ", false);
-        setStatus("⚠️ Trình duyệt không hỗ trợ nhận diện giọng nói. Dùng Chrome/Edge.");
-        btnVoiceStart.disabled = true;
-        btnVoiceStop.disabled = true;
-        return;
-      }
-
-      vr = new SpeechRecognition();
-      vr.continuous = true;
-      vr.interimResults = true;
-      vr.lang = "vi-VN";
-
-      vr.onstart = () => {
-        voiceListening = true;
-        setVoiceBadge("Đang nghe…", true);
-        setStatus("🎙️ Đang nghe giọng nói…");
-      };
-
-      vr.onend = () => {
-        voiceListening = false;
-        setVoiceBadge("Đã dừng", true);
-        setStatus("🎙️ Đã dừng nhận giọng nói.");
-      };
-
-      vr.onerror = (e) => {
-        setVoiceBadge("Lỗi mic", false);
-        setStatus("❌ Lỗi giọng nói: " + (e?.error || "unknown"));
-      };
-
-      vr.onresult = (event) => {
-        let finalText = "";
-        let interimText = "";
-
-        for(let i = event.resultIndex; i < event.results.length; i++){
-          const res = event.results[i];
-          const t = res[0].transcript;
-          if(res.isFinal) finalText += t;
-          else interimText += t;
-        }
-
-        // Hiển thị text đang nhận (tạm)
-        if(interimText){
-          voiceBox.value = interimText.trim();
-        }
-
-        // Khi có kết quả final -> đưa vào textbox + parse lệnh
-        if(finalText){
-          const cleaned = finalText.trim();
-          voiceBox.value = cleaned;
-
-          const r = applyCommandToDraft(cleaned);
-          if(r.ok){
-            setVoiceBadge("Đã nhận lệnh", true);
-            setStatus("✅ Voice: " + r.msg + " (Bấm 📤 GỬI để đẩy lên Firebase)");
-            if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
-          }else{
-            setVoiceBadge("Không hiểu lệnh", false);
-            setStatus("⚠️ Voice: " + r.msg);
-            if (navigator.vibrate) navigator.vibrate(60);
-          }
-        }
-      };
-
-      btnVoiceStart.addEventListener("click", async () => {
-        try{
-          // Xin quyền mic trước (giảm lỗi trên mobile)
-          if(navigator.mediaDevices?.getUserMedia){
-            await navigator.mediaDevices.getUserMedia({ audio:true });
-          }
-          if(!voiceListening) vr.start();
-        }catch(err){
-          setVoiceBadge("Chưa cấp mic", false);
-          setStatus("❌ Không mở được micro. Hãy cấp quyền micro cho trang.");
-        }
-      });
-
-      btnVoiceStop.addEventListener("click", () => {
-        if(voiceListening) vr.stop();
-      });
-
-      btnVoiceClear.addEventListener("click", () => {
-        voiceBox.value = "";
-        setVoiceBadge("Sẵn sàng", true);
-        setStatus("Đã xoá lệnh giọng nói.");
-      });
-
-      // Nếu người dùng gõ tay rồi nhấn Enter (tuỳ chọn)
-      voiceBox.addEventListener("keydown", (e) => {
-        if(e.key === "Enter" && (e.ctrlKey || e.metaKey)){
-          const r = applyCommandToDraft(voiceBox.value);
-          setStatus(r.ok ? ("✅ Text: " + r.msg) : ("⚠️ Text: " + r.msg));
-        }
-      });
-    }
-
-    // ====== Init ======
-    renderPins();
-    initVoice();
-    readOnce().finally(() => openStream());
-  </script>
-</body>
-</html>
+  // 2) nghe Telegram + menu + điều khiển
+  handleTelegram();
+}
