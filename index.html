@@ -212,14 +212,23 @@ void handleFirebaseEvent(const String& jsonData) {
 }
 
 void processSseLine(const String& line) {
-  if (line.startsWith(":")) return; // keep alive
+  if (line.startsWith(":")) return; // keep-alive comment
 
   if (line.startsWith("data:")) {
-    String payload = line.substring(5);
-    payload.trim();
-    if (payload.length() > 0) {
-      handleFirebaseEvent(payload); // xử lý NGAY
+    String part = line.substring(5);
+    part.trim();
+    // Firebase có thể gửi data nhiều dòng -> nối lại
+    if (sseMsgData.length() > 0) sseMsgData += "\n";
+    sseMsgData += part;
+    return;
+  }
+
+  // blank line => kết thúc event
+  if (line.length() == 0) {
+    if (sseMsgData.length() > 0) {
+      handleFirebaseEvent(sseMsgData);
     }
+    sseMsgData = "";
   }
 }
 
