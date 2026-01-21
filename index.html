@@ -2,9 +2,9 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <meta name="theme-color" content="#0b1220" />
-  <title>ĐIỀU KHIỂN IOT - IOT CONTROL</title>
+  <title>ĐIỀU KHIỂN IOT - IOT COTROL </title>
 
   <style>
     :root{
@@ -156,7 +156,7 @@
 
 <body>
   <div class="screen">
-    <div class="topbar">ĐIỀU KHIỂN IOT - IOT CONTROL vs1</div>
+    <div class="topbar">ĐIỀU KHIỂN IOT - IOT COTROL</div>
 
     <div class="wrap">
       <div class="card">
@@ -209,34 +209,6 @@
         </details>
       </div>
 
-      <!-- ===== VOICE COMMAND (BOTTOM) ===== -->
-      <div class="card" id="voiceCard">
-        <div class="card-header">
-          <div class="title">
-            <div class="name">🎙️ Nhận lệnh giọng nói</div>
-            <div class="hint">Nói: “bật pin 1”, “tắt thiết bị 2”, “bật tất cả”…</div>
-          </div>
-          <div class="badge" id="voiceBadge">● Sẵn sàng</div>
-        </div>
-
-        <div style="padding:12px; display:grid; gap:10px;">
-          <textarea id="voiceBox" placeholder="Lệnh giọng nói sẽ hiện ở đây... (cũng có thể gõ tay)"
-            style="width:100%;min-height:90px;resize:vertical;border-radius:16px;border:1px solid rgba(255,255,255,.12);
-                   background:rgba(0,0,0,.20);color:var(--text);padding:12px;outline:none;font-size:15px;line-height:1.35;"></textarea>
-
-          <div style="display:flex;gap:10px;">
-            <button class="btn info" type="button" id="btnVoiceStart">🎤 BẮT ĐẦU</button>
-            <button class="btn warn" type="button" id="btnVoiceStop">⏹ DỪNG</button>
-            <button class="btn" style="background:#e11d48;color:#fff" type="button" id="btnVoiceClear">🗑 XOÁ</button>
-          </div>
-
-          <div class="note" id="voiceHint">
-            • Chrome/Edge sẽ hỗ trợ tốt nhất. Nếu không nhận mic, hãy cấp quyền micro cho trang.<br/>
-            • Lệnh sẽ cập nhật trạng thái công tắc (draft). Muốn gửi lên Firebase thì bấm nút “📤 GỬI”.
-          </div>
-        </div>
-      </div>
-
       <div class="safe-zone"></div>
     </div>
   </div>
@@ -244,7 +216,7 @@
   <script>
     // ====== UI model ======
     const PINS = [
-      { key: "PINtest", label: "KT tín hiệu", desc: "GPIO 2 (test đèn)" },
+      { key: "PINtest", label: "Kiểm tra", desc: "GPIO 2 (test đèn)" },
       { key: "PIN1",    label: "Thiết bị 01",    desc: "GPIO 16" },
       { key: "PIN2",    label: "Thiết bị 02",    desc: "GPIO 17" },
       { key: "PIN3",    label: "Thiết bị 03",    desc: "GPIO 18" },
@@ -341,194 +313,127 @@
       });
     }
 
-    // ====== VOICE COMMAND (START / STOP / CLEAR) ======
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const voiceBadge = $("voiceBadge");
-    const voiceBox = $("voiceBox");
-    const btnVoiceStart = $("btnVoiceStart");
-    const btnVoiceStop = $("btnVoiceStop");
-    const btnVoiceClear = $("btnVoiceClear");
+    // ====== REST: Read once / Write patch ======
+    async function readOnce() {
+      const url = buildRestUrl();
+      setStatus("Đang đọc dữ liệu…");
+      try{
+        const res = await fetch(url, { method:"GET" });
+        const data = await res.json();
+        if (!res.ok) throw new Error((data && data.error) ? data.error : ("HTTP " + res.status));
 
-    let vr = null;
-    let voiceListening = false;
-
-    function setVoiceBadge(msg, ok=true){
-      voiceBadge.textContent = "● " + msg;
-      voiceBadge.style.color = ok ? "#b8ffd2" : "#ffd0d0";
-      voiceBadge.style.borderColor = ok ? "rgba(22,163,74,.35)" : "rgba(239,68,68,.35)";
+        if (data && typeof data === "object") {
+          server = { ...server, ...data };
+          applyServerToDraft();
+        }
+        setStatus("✅ Đã đọc trạng thái từ Firebase.");
+        setBadge("Đang kết nối", true);
+      }catch(err){
+        setStatus("❌ Lỗi đọc: " + err.message);
+        setBadge("Lỗi kết nối", false);
+      }
     }
 
-    function normalizeCommand(s){
-      return (s || "")
-        .toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // bỏ dấu tiếng Việt
-        .replace(/[^a-z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    async function sendPatch() {
+      const url = buildRestUrl();
+      const payload = {};
+      PINS.forEach(p => payload[p.key] = Number(draft[p.key]) === 1 ? 1 : 0);
+
+      setStatus("Đang gửi lệnh…");
+      try{
+        const res = await fetch(url, {
+          method:"PATCH",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(()=> ({}));
+        if (!res.ok) throw new Error((data && data.error) ? data.error : ("HTTP " + res.status));
+
+        setStatus("✅ Đã gửi lên Firebase.");
+        setBadge("Đang kết nối", true);
+      }catch(err){
+        setStatus("❌ Lỗi gửi: " + err.message);
+        setBadge("Lỗi kết nối", false);
+      }
     }
 
-    function applyCommandToDraft(cmdRaw){
-      const cmd = normalizeCommand(cmdRaw);
-      if(!cmd) return { ok:false, msg:"Không có lệnh." };
-
-      // Helpers
-      const setAll = (v) => {
-        PINS.forEach(p => draft[p.key] = v);
-        applyServerToDraft(); // dùng để refresh UI theo draft hiện tại
-      };
-
-      // bật/tắt tất cả
-      if(cmd.includes("bat tat ca") || cmd.includes("bat het")){
-        PINS.forEach(p => draft[p.key] = 1);
-        applyServerToDraft();  // update UI
-        return { ok:true, msg:"Đã bật tất cả (draft)." };
-      }
-      if(cmd.includes("tat tat ca") || cmd.includes("tat het")){
-        PINS.forEach(p => draft[p.key] = 0);
-        applyServerToDraft();  // update UI
-        return { ok:true, msg:"Đã tắt tất cả (draft)." };
-      }
-
-      // Map số -> key
-      const mapNumToKey = (n) => {
-        if(n === 1) return "PIN1";
-        if(n === 2) return "PIN2";
-        if(n === 3) return "PIN3";
-        if(n === 4) return "PIN4";
-        return null;
-      };
-
-      // Nhận "pin test", "test", "pintest"
-      const isTest = (cmd.includes("pin test") || cmd.includes("pintest") || cmd === "test" || cmd.includes("den test"));
-
-      // Tìm số thiết bị/pin
-      const m = cmd.match(/\b(pin|thiet bi)\s*(\d)\b/);
-      const num = m ? Number(m[2]) : null;
-
-      const isOn  = cmd.startsWith("bat") || cmd.includes(" bat ") || cmd.includes("mo ");
-      const isOff = cmd.startsWith("tat") || cmd.includes(" tat ") || cmd.includes("dong ");
-
-      if(!isOn && !isOff){
-        return { ok:false, msg:"Không rõ bật hay tắt. Ví dụ: 'bật pin 1'." };
-      }
-
-      const on = isOn && !isOff; // ưu tiên bật nếu câu chứa "bật"
-      // Nếu câu có cả bật và tắt (hiếm) thì dùng ưu tiên bật; muốn chặt chẽ có thể refine sau.
-
-      // Lệnh cho PINtest
-      if(isTest){
-        if(turnOnOff("PINtest", on)) return { ok:true, msg:`Đã ${on?"bật":"tắt"} PINtest (draft).` };
-      }
-
-      // Lệnh theo số
-      if(num){
-        const key = mapNumToKey(num);
-        if(key && turnOnOff(key, on)) return { ok:true, msg:`Đã ${on?"bật":"tắt"} ${key} (draft).` };
-      }
-
-      return { ok:false, msg:"Không nhận ra thiết bị. Nói: 'bật pin 1', 'tắt thiết bị 2'..." };
+    // ====== REALTIME via SSE (EventSource) ======
+    let es = null;
+    function closeStream() {
+      if (es) { try{ es.close(); }catch(_){} }
+      es = null;
     }
 
-    function initVoice(){
-      if(!SpeechRecognition){
-        setVoiceBadge("Không hỗ trợ", false);
-        setStatus("⚠️ Trình duyệt không hỗ trợ nhận diện giọng nói. Dùng Chrome/Edge.");
-        btnVoiceStart.disabled = true;
-        btnVoiceStop.disabled = true;
+    function openStream() {
+      closeStream();
+      const url = buildStreamUrl();
+
+      try{
+        es = new EventSource(url);
+      }catch(e){
+        setStatus("❌ Không tạo được EventSource: " + e.message);
+        setBadge("Lỗi kết nối", false);
         return;
       }
 
-      vr = new SpeechRecognition();
-      vr.continuous = true;
-      vr.interimResults = true;
-      vr.lang = "vi-VN";
+      setBadge("Đang kết nối", true);
+      setStatus("📡 Đang nghe realtime…");
 
-      vr.onstart = () => {
-        voiceListening = true;
-        setVoiceBadge("Đang nghe…", true);
-        setStatus("🎙️ Đang nghe giọng nói…");
-      };
+      // Firebase stream sends "put" / "patch" events
+      es.addEventListener("open", () => {
+        setBadge("Realtime ON", true);
+        setStatus("📡 Realtime ON. Dữ liệu đổi sẽ cập nhật UI.");
+      });
 
-      vr.onend = () => {
-        voiceListening = false;
-        setVoiceBadge("Đã dừng", true);
-        setStatus("🎙️ Đã dừng nhận giọng nói.");
-      };
+      es.addEventListener("error", () => {
+        setBadge("Realtime lỗi", false);
+        setStatus("❌ Realtime bị lỗi/đứt. Bấm “Kết nối lại” hoặc kiểm tra Rules/Token.");
+      });
 
-      vr.onerror = (e) => {
-        setVoiceBadge("Lỗi mic", false);
-        setStatus("❌ Lỗi giọng nói: " + (e?.error || "unknown"));
-      };
+      const handle = (ev) => {
+        if (!ev || !ev.data) return;
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch(_) { return; }
+        // msg: { path:"/", data:{...} } or { path:"/PIN2", data:1 }
+        const path = msg.path || "";
+        const data = msg.data;
 
-      vr.onresult = (event) => {
-        let finalText = "";
-        let interimText = "";
-
-        for(let i = event.resultIndex; i < event.results.length; i++){
-          const res = event.results[i];
-          const t = res[0].transcript;
-          if(res.isFinal) finalText += t;
-          else interimText += t;
+        if (path === "/" && data && typeof data === "object") {
+          server = { ...server, ...data };
+          applyServerToDraft();
+          return;
         }
 
-        // Hiển thị text đang nhận (tạm)
-        if(interimText){
-          voiceBox.value = interimText.trim();
-        }
-
-        // Khi có kết quả final -> đưa vào textbox + parse lệnh
-        if(finalText){
-          const cleaned = finalText.trim();
-          voiceBox.value = cleaned;
-
-          const r = applyCommandToDraft(cleaned);
-          if(r.ok){
-            setVoiceBadge("Đã nhận lệnh", true);
-            setStatus("✅ Voice: " + r.msg + " (Bấm 📤 GỬI để đẩy lên Firebase)");
-            if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
-          }else{
-            setVoiceBadge("Không hiểu lệnh", false);
-            setStatus("⚠️ Voice: " + r.msg);
-            if (navigator.vibrate) navigator.vibrate(60);
+        if (path.startsWith("/")) {
+          const key = path.slice(1);
+          if (key in server) {
+            const v = (data === true) ? 1 : (data === false) ? 0 : Number(data);
+            if (v === 0 || v === 1) {
+              server[key] = v;
+              applyServerToDraft();
+            }
           }
         }
       };
 
-      btnVoiceStart.addEventListener("click", async () => {
-        try{
-          // Xin quyền mic trước (giảm lỗi trên mobile)
-          if(navigator.mediaDevices?.getUserMedia){
-            await navigator.mediaDevices.getUserMedia({ audio:true });
-          }
-          if(!voiceListening) vr.start();
-        }catch(err){
-          setVoiceBadge("Chưa cấp mic", false);
-          setStatus("❌ Không mở được micro. Hãy cấp quyền micro cho trang.");
-        }
-      });
-
-      btnVoiceStop.addEventListener("click", () => {
-        if(voiceListening) vr.stop();
-      });
-
-      btnVoiceClear.addEventListener("click", () => {
-        voiceBox.value = "";
-        setVoiceBadge("Sẵn sàng", true);
-        setStatus("Đã xoá lệnh giọng nói.");
-      });
-
-      // Nếu người dùng gõ tay rồi nhấn Enter (tuỳ chọn)
-      voiceBox.addEventListener("keydown", (e) => {
-        if(e.key === "Enter" && (e.ctrlKey || e.metaKey)){
-          const r = applyCommandToDraft(voiceBox.value);
-          setStatus(r.ok ? ("✅ Text: " + r.msg) : ("⚠️ Text: " + r.msg));
-        }
-      });
+      es.addEventListener("put", handle);
+      es.addEventListener("patch", handle);
+      // some environments might send "message" too
+      es.addEventListener("message", handle);
     }
+
+    // ====== Bind buttons ======
+    $("btnRefresh").addEventListener("click", () => readOnce());
+    $("btnSend").addEventListener("click", () => sendPatch());
+    $("btnReconnect").addEventListener("click", () => {
+      setStatus("🔌 Đang kết nối lại realtime…");
+      openStream();
+    });
+    $("btnReadOnce").addEventListener("click", () => readOnce());
 
     // ====== Init ======
     renderPins();
-    initVoice();
+    // initial read + realtime stream
     readOnce().finally(() => openStream());
   </script>
 </body>
